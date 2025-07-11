@@ -157,11 +157,24 @@ const getCaptions = async (videoUrl, languageCode) => {
 };
 
 const extractTaskInformation = async (languageCode, triggerAction) => {
+  // Add this line for debugging
+  console.log("The triggerAction is:", triggerAction);
+  
   let actionType = "";
   let mediaType = "";
   let taskInput = "";
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  // Handle the dedicated screenshot command first
+  if (triggerAction === "screenshot") {
+    mediaType = "image";
+    // Use the default action for images (e.g., summarize)
+    actionType = (await chrome.storage.local.get({ noTextAction: "summarize" })).noTextAction;
+    taskInput = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg" });
+    // Return immediately with the screenshot data
+    return { actionType, mediaType, taskInput };
+  }
 
   // Get the selected text
   try {
@@ -183,9 +196,7 @@ const extractTaskInformation = async (languageCode, triggerAction) => {
       case "custom-action-2":
         actionType = "textCustom2";
         break;
-      case "custom-action-3":
-        actionType = "textCustom3";
-        break;
+      // Note: custom-action-3 was removed to make space for screenshot
     }
 
     mediaType = "text";
@@ -200,9 +211,7 @@ const extractTaskInformation = async (languageCode, triggerAction) => {
       case "custom-action-2":
         actionType = "noTextCustom2";
         break;
-      case "custom-action-3":
-        actionType = "noTextCustom3";
-        break;
+      // Note: custom-action-3 was removed to make space for screenshot
     }
 
     if (tab.url.startsWith("https://www.youtube.com/watch?v=") || tab.url.startsWith("https://m.youtube.com/watch?v=")) {
@@ -308,6 +317,22 @@ const main = async (useCache) => {
     const languageModel = document.getElementById("languageModel").value;
     const languageCode = document.getElementById("languageCode").value;
     const triggerAction = document.getElementById("triggerAction").value;
+    
+    let actionType, mediaType, taskInput;
+
+    // --- START: MODIFIED LOGIC ---
+    if (triggerAction === "screenshot") {
+      // If the command is "screenshot", handle it here directly
+      console.log("Screenshot command detected. Capturing now.");
+      mediaType = "image";
+      actionType = (await chrome.storage.local.get({ noTextAction: "summarize" })).noTextAction;
+      taskInput = await chrome.tabs.captureVisibleTab(null, { format: "jpeg" });
+    } else {
+      // Otherwise, run the original complex logic to get text/captions
+      ({ actionType, mediaType, taskInput } = await extractTaskInformation(languageCode, triggerAction));
+    }
+    // --- END: MODIFIED LOGIC ---
+
     let taskInputChunks = [];
 
     // Disable the buttons and input fields
@@ -318,9 +343,6 @@ const main = async (useCache) => {
     document.getElementById("languageCode").disabled = true;
     document.getElementById("copy").disabled = true;
     document.getElementById("results").disabled = true;
-
-    // Extract the task information
-    const { actionType, mediaType, taskInput } = await extractTaskInformation(languageCode, triggerAction);
 
     // Display a loading message
     displayIntervalId = setInterval(displayLoadingMessage, 500, "status", getLoadingMessage(actionType, mediaType));
@@ -336,7 +358,6 @@ const main = async (useCache) => {
         taskInput: taskInput,
         languageModel: languageModel
       });
-
       console.log(taskInputChunks);
     }
 
@@ -365,7 +386,6 @@ const main = async (useCache) => {
           // Stream the content
           streamIntervalId = setInterval(async () => {
             const { streamContent } = await chrome.storage.session.get({ streamContent: "" });
-
             if (streamContent) {
               document.getElementById("content").innerHTML =
                 convertMarkdownToHtml(`${content}\n\n${streamContent}\n\n`, false);
@@ -385,38 +405,26 @@ const main = async (useCache) => {
 
       if (response.ok) {
         if (response.body.promptFeedback?.blockReason) {
-          // The prompt was blocked
-          content = `${chrome.i18n.getMessage("popup_prompt_blocked")} ` +
-            `Reason: ${response.body.promptFeedback.blockReason}`;
+          content = `${chrome.i18n.getMessage("popup_prompt_blocked")} ` + `Reason: ${response.body.promptFeedback.blockReason}`;
           break;
         } else if (response.body.candidates?.[0].finishReason !== "STOP") {
-          // The response was blocked
-          content = `${chrome.i18n.getMessage("popup_response_blocked")} ` +
-            `Reason: ${response.body.candidates[0].finishReason}`;
+          content = `${chrome.i18n.getMessage("popup_response_blocked")} ` + `Reason: ${response.body.candidates[0].finishReason}`;
           break;
         } else if (response.body.candidates?.[0].content) {
-          // A normal response was returned
           content += `${response.body.candidates[0].content.parts[0].text}\n\n`;
           document.getElementById("content").innerHTML = convertMarkdownToHtml(content, false);
-
-          // Scroll to the bottom of the page
           if (!streaming) {
             window.scrollTo(0, document.body.scrollHeight);
           }
         } else {
-          // The expected response was not returned
           content = chrome.i18n.getMessage("popup_unexpected_response");
           break;
         }
       } else {
-        // A response error occurred
         content = `Error: ${response.status}\n\n${response.body.error.message}`;
-
         if (!apiKey) {
-          // If the API Key is not set, add a message to prompt the user to set it
           content += `\n\n${chrome.i18n.getMessage("popup_no_apikey")}`;
         }
-
         break;
       }
     }
@@ -424,23 +432,16 @@ const main = async (useCache) => {
     content = chrome.i18n.getMessage("popup_miscellaneous_error");
     console.error(error);
   } finally {
-    // Clear the loading message
     if (displayIntervalId) {
       clearInterval(displayIntervalId);
     }
-
-    // Enable the buttons and input fields
     document.getElementById("status").textContent = "";
     document.getElementById("run").disabled = false;
     document.getElementById("languageModel").disabled = false;
     document.getElementById("languageCode").disabled = false;
     document.getElementById("copy").disabled = false;
     document.getElementById("results").disabled = false;
-
-    // Convert the content from Markdown to HTML
     document.getElementById("content").innerHTML = convertMarkdownToHtml(content, false);
-
-    // Save the content to the session storage
     await chrome.storage.session.set({
       [`r_${resultIndex}`]: {
         requestApiContent: response.requestApiContent,
