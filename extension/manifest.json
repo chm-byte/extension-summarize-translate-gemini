@@ -40,11 +40,11 @@
       },
       "description": "__MSG_context_custom_action_2__"
     },
-    "custom-action-3": {
-      "suggested_key": {
-        "default": "Alt+3"
-      },
-      "description": "__MSG_context_custom_action_3__"
-    }
+    "screenshot": {
+    "suggested_key": {
+      "default": "Alt+S"
+    },
+    "description": "Capture and process a screenshot"
+  }
   }
 }
